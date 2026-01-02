@@ -5,27 +5,57 @@ export const updateFaceExpressions = (
   scene: THREE.Group,
   blendshapes: any[]
 ) => {
-  // 1. Find all meshes that can be morphed (Head, Teeth, Beard, etc.)
+  const nameMapping: Record<string, string> = {
+    jawOpen: "mouthOpen",
+    mouthSmileLeft: "mouthSmile",
+    mouthSmileRight: "mouthSmile",
+    mouthFunnel: "mouthOpen",
+    mouthPucker: "mouthOpen",
+  };
+
+  // 1. Calculate Targets First (Avoid Overwriting)
+  // We store the target value for each Avatar Shape here
+  const targetInfluences: Record<string, number> = {};
+
+  blendshapes.forEach((shape) => {
+    let targetName = shape.categoryName;
+
+    // Check mapping
+    if (nameMapping[targetName]) {
+      targetName = nameMapping[targetName];
+    }
+
+    // Initialize if not exists
+    if (targetInfluences[targetName] === undefined) {
+      targetInfluences[targetName] = 0;
+    }
+
+    // KEY FIX: Use Math.max
+    // If jawOpen is 0.8 and mouthFunnel is 0.0, we keep 0.8
+    targetInfluences[targetName] = Math.max(
+      targetInfluences[targetName],
+      shape.score
+    );
+  });
+
+  // 2. Apply to Avatar
   scene.traverse((child) => {
-    // TYPE FIX: We cast child to SkinnedMesh to check for morph targets
     const mesh = child as THREE.SkinnedMesh;
 
-    // Only proceed if it is a Mesh and HAS morph targets
     if (
       mesh.isSkinnedMesh &&
       mesh.morphTargetDictionary &&
       mesh.morphTargetInfluences
     ) {
-      // 2. Loop through every blendshape from MediaPipe
-      blendshapes.forEach((shape) => {
-        const index = mesh.morphTargetDictionary![shape.categoryName];
+      // Loop through the targets we calculated above
+      Object.keys(targetInfluences).forEach((key) => {
+        const index = mesh.morphTargetDictionary![key];
 
         if (index !== undefined) {
-          // 3. Apply Smoothing (Lerp)
           const current = mesh.morphTargetInfluences![index];
-          const target = shape.score;
+          const target = targetInfluences[key];
 
-          // 0.5 = Smooth but responsive
+          // Apply smoothing
           mesh.morphTargetInfluences![index] = lerp(current, target, 0.5);
         }
       });
