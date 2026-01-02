@@ -20,14 +20,15 @@ export function useAvatarLogic(avatarUrl: string) {
   // State for rotation smoothing
   const smoothRotation = useRef(new THREE.Euler());
 
-  // 1. Setup: Hide Body
+  // Setup: Hide Body
   useEffect(() => {
     if (!scene) return;
     scene.traverse((child) => {
-      const mesh = child as THREE.Mesh; // Type Fix here too
+      const mesh = child as THREE.Mesh;
       if (mesh.isMesh) {
         const keepList = [
           "Wolf3D_Head",
+          "Wolf3D_Hair",
           "Wolf3D_Teeth",
           "Wolf3D_Beard",
           "Wolf3D_Glasses",
@@ -43,7 +44,7 @@ export function useAvatarLogic(avatarUrl: string) {
     });
   }, [scene]);
 
-  // 2. Setup: MediaPipe
+  // Setup: MediaPipe
   useEffect(() => {
     const setupMediaPipe = async () => {
       const vision = await FilesetResolver.forVisionTasks(
@@ -68,7 +69,7 @@ export function useAvatarLogic(avatarUrl: string) {
     setupMediaPipe();
   }, []);
 
-  // 3. Animation Loop (The Orchestrator)
+  // Animation Loop
   useFrame(() => {
     if (
       !faceLandmarkerRef.current ||
@@ -83,16 +84,16 @@ export function useAvatarLogic(avatarUrl: string) {
     );
 
     if (result.faceBlendshapes && result.faceBlendshapes.length > 0) {
-      // A. Call Rotation Logic
+      // Call Rotation Logic
       const matrix = result.facialTransformationMatrixes![0];
       if (matrix) {
         updateHeadRotation(nodes, matrix, smoothRotation.current);
       }
 
-      // B. Call Expression Logic
+      // Call Expression Logic
       const blendshapes = result.faceBlendshapes[0].categories;
       if (blendshapes) {
-        updateFaceExpressions(scene, blendshapes, nodes);
+        updateFaceExpressions(scene, blendshapes);
       }
     }
   });

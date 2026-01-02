@@ -1,10 +1,9 @@
-import { useEffect } from "react"; // <--- Import useEffect
+import { useEffect } from "react";
 import { Canvas } from "@react-three/fiber";
 import { Suspense } from "react";
 import { Avatar } from "./components/Avatar";
 
 function App() {
-  // --- ADD THIS BLOCK TO START THE CAMERA ---
   useEffect(() => {
     const startWebcam = async () => {
       try {
@@ -21,7 +20,6 @@ function App() {
 
     startWebcam();
   }, []);
-  // ------------------------------------------
 
   return (
     <div
@@ -44,7 +42,7 @@ function App() {
         }}
       >
         <video
-          id="video" // Avatar.tsx will look for this ID later to track your face
+          id="video" // Avatar.tsx will look for this ID later to track  face
           autoPlay
           playsInline
           muted
@@ -58,7 +56,7 @@ function App() {
 
       {/* Right Side: Avatar */}
       <div style={{ flex: 1 }}>
-        <Canvas camera={{ position: [0, 0, 0.6], fov: 60 }}>
+        <Canvas camera={{ position: [0, -0.1, 0.6], fov: 60 }}>
           {" "}
           <ambientLight intensity={1.5} />
           <spotLight
