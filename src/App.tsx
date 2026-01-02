@@ -5,7 +5,7 @@ import { Avatar } from "./components/Avatar"; // Adjust path if needed
 function App() {
   return (
     <div style={{ width: "100vw", height: "100vh", background: "#111" }}>
-      <Canvas camera={{ position: [0, 0, 0.6], fov: 50 }}>
+      <Canvas camera={{ position: [0, 0, 0.8], fov: 50 }}>
         {/* Lights */}
         <ambientLight intensity={0.6} />
         <spotLight

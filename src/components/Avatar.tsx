@@ -34,5 +34,5 @@ export function Avatar() {
   }, [scene]);
 
   // Position adjusted to center the head (since body is hidden)
-  return <primitive object={scene} ref={avatarRef} position={[0, -1.6, 0]} />;
+  return <primitive object={scene} ref={avatarRef} position={[0, -1.7, 0]} />;
 }
