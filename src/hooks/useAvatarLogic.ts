@@ -92,7 +92,7 @@ export function useAvatarLogic(avatarUrl: string) {
       // B. Call Expression Logic
       const blendshapes = result.faceBlendshapes[0].categories;
       if (blendshapes) {
-        updateFaceExpressions(scene, blendshapes);
+        updateFaceExpressions(scene, blendshapes, nodes);
       }
     }
   });
