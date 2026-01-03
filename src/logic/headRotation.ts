@@ -1,3 +1,4 @@
+// src/utils/headRotation.ts (or wherever the file is)
 import * as THREE from "three";
 import { dampEuler } from "../utils/math";
 
@@ -6,26 +7,24 @@ export const updateHeadRotation = (
   matrix: any,
   smoothRotation: THREE.Euler
 ) => {
-  // Convert Matrix to Euler Angles
   const rotationMatrix = new THREE.Matrix4().fromArray(matrix.data);
   const targetEuler = new THREE.Euler().setFromRotationMatrix(rotationMatrix);
 
-  // Smooth the rotation 
   const damped = dampEuler(smoothRotation, targetEuler, 0.2);
   smoothRotation.copy(damped);
 
-  // Find the Bone
   const headBone = (nodes.Head || nodes.Neck) as THREE.Bone;
 
-  // Apply Rotation with Scale
-  // Pitch (X), Yaw (Y), Roll (Z)
   const rotationScale = { x: 1, y: 1.0, z: 1 };
 
   if (headBone) {
     headBone.rotation.set(
+      // Pitch (up/down) – keep as‑is
       damped.x * rotationScale.x,
-      -damped.y * rotationScale.y, // Inverted
-      -damped.z * rotationScale.z // Inverted
+      // Yaw (left/right) – invert to match webcam orientation
+      -damped.y * rotationScale.y,
+      // Roll (ear to shoulder) – keep as‑is
+      damped.z * rotationScale.z
     );
   }
 };
