@@ -7,7 +7,7 @@ from model import FlowMatchingNet
 from flow_solver import FlowSolver
 from face_tracker import FaceTracker
 
-IMG_SIZE = 128
+IMG_SIZE = 512
 
 def main():
     # Device selection: Check for CUDA (Nvidia), XPU (Intel), or CPU
@@ -19,6 +19,9 @@ def main():
         device = torch.device("cpu")
     
     # 1. Load Model
+    # Optimization: Enable cudnn benchmark for consistent input sizes
+    torch.backends.cudnn.benchmark = True
+    
     net = FlowMatchingNet().to(device)
     if not torch.os.path.exists("model.pth"):
         print("Error: model.pth not found. Please run train_overfit.py first.")
@@ -28,8 +31,14 @@ def main():
     net.eval()
     
     # 2. Setup Utilities
+    # PERFORMANCE TUNING: 
+    # - Reduced steps from 5 to 3 for speed (1-2 steps might also work for "turbo" mode).
+    # - Using INFERENCE_SIZE=256 reduces compute by 4x compared to 512.
+    SOLVER_STEPS = 3
+    INFERENCE_SIZE = 512
+    
     solver = FlowSolver()
-    tracker = FaceTracker()
+    tracker = FaceTracker(refine_landmarks=True)
     cap = cv2.VideoCapture(0)
     
     transform = transforms.Compose([
@@ -38,10 +47,11 @@ def main():
     ])
 
     # Temporal Warm-Start: Use the same base noise across frames to prevent flickering
-    # This ensures the 'starting point' for the generator is stable.
-    persistent_noise = torch.randn(1, 3, IMG_SIZE, IMG_SIZE).to(device)
+    # We initialize this at INFERENCE_SIZE
+    persistent_noise = torch.randn(1, 3, INFERENCE_SIZE, INFERENCE_SIZE).to(device)
 
-    print("Live Anonymizer Started. Press 'q' to quit.")
+    print(f"Live Anonymizer Started. Resolution: {INFERENCE_SIZE}px | Steps: {SOLVER_STEPS}")
+    print("Press 'q' to quit.")
 
     prev_time = 0
 
@@ -52,28 +62,35 @@ def main():
         frame = cv2.flip(frame, 1)
         
         # 3. Get Landmarks from YOUR face
-        # We process at IMG_SIZE to match model training
-        small_frame = cv2.resize(frame, (IMG_SIZE, IMG_SIZE))
-        results = tracker.process_frame(small_frame)
+        # process_frame works best on reasonably high res images
+        # We keep the display/processing logic at IMG_SIZE (512) for consistency with training view
+        display_frame = cv2.resize(frame, (IMG_SIZE, IMG_SIZE))
+        results = tracker.process_frame(display_frame)
         
         # 4. Create Landmark Mask (Condition)
         mask = np.zeros((IMG_SIZE, IMG_SIZE, 3), dtype=np.uint8)
         if results.multi_face_landmarks:
             tracker.draw_landmarks(mask, results)
+            
+        # Optimization: Resize mask to lower inference resolution
+        mask_small = cv2.resize(mask, (INFERENCE_SIZE, INFERENCE_SIZE))
         
         # 5. Generate Anonymized Face
-        cond = transform(mask).unsqueeze(0).to(device)
+        cond = transform(mask_small).unsqueeze(0).to(device)
         
-        with torch.no_grad():
+        with torch.inference_mode():
             # Use persistent noise instead of generating new noise every frame
             def model_vt(x, t):
                 return net(x, t, cond)
             
-            # Solve the ODE in 5 steps
-            out = solver.solve_euler(persistent_noise, model_vt, steps=5)
+            # Solve the ODE
+            out = solver.solve_euler(persistent_noise, model_vt, steps=SOLVER_STEPS)
             
             # Denormalize
             out = (out.clamp(-1, 1) + 1) / 2
+            # Upscale back to 512 for display
+            out = torch.nn.functional.interpolate(out, size=(IMG_SIZE, IMG_SIZE), mode='bilinear', align_corners=False)
+            
             gen_face = (out.squeeze().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
             gen_face = cv2.cvtColor(gen_face, cv2.COLOR_RGB2BGR)
 
@@ -81,12 +98,10 @@ def main():
         # Stack images horizontally: [Generated Face | Landmark Mask]
         combined = np.hstack((gen_face, mask))
         
-        # Resize for better visibility (e.g., scale up 4x to 512 height)
-        display_scale = 4
-        display_h, display_w = IMG_SIZE * display_scale, (IMG_SIZE * 2) * display_scale
-        
-        # INTER_NEAREST keeps it crisp, INTER_LINEAR makes it smoother
-        combined_large = cv2.resize(combined, (display_w, display_h), interpolation=cv2.INTER_NEAREST)
+        # Current resolution is already 512x512, so the combined width is 1024.
+        # This is large enough for display.
+        combined_large = combined
+        display_h, display_w = combined.shape[:2]
         
         # Calculate FPS
         curr_time = time.time()

@@ -51,10 +51,10 @@ cdot dt$.
     3.  `cond`: The landmark mask (the geometry control signal).
 *   **Output:** The "Velocity" (direction) needed to denoise the image towards the target face.
 
-### 4. The Teacher (`train_overfit.py`)
+### 4. The Teacher (`train.py`)
 *   **Function:** Training script.
-*   **Current Mode:** **"Overfitting"**. We currently train the model on a *single* image (`character1.jpg`).
-*   **Why?** To prove the pipeline works. The model memorizes this specific face and learns to warp it to match whatever landmarks it sees.
+*   **Current Mode:** **"One-Shot Adaptation"**. The model learns to map the generic MediaPipe landmarks to a specific target identity (from `face-avatars/`).
+*   **Capabilities:** Supports Data Augmentation (Rotation, Scale, Shift) to create a robust model from a single image. Automatically detects CUDA (Nvidia), XPU (Intel), or CPU.
 *   **Outcome:** Produces a `model.pth` file containing the weights.
 
 ### 5. The Application (`anonymize.py`)
@@ -79,11 +79,13 @@ pip install -r requirements.txt
 ```
 
 ### Usage
-1.  **Train the Prototype:**
-    ```bash
-    python train_overfit.py
-    ```
-    *This will train for 1500 steps on `character1.jpg` and save `model.pth`.*
+1.  **Train the Model (Local):**
+    *   **Check Hardware:** Run `python check_gpu.py` to see if your GPU (CUDA/Intel) is detected.
+    *   **Start Training:**
+        ```bash
+        python train.py
+        ```
+        *This will train on your local machine. It saves checkpoints to `training_outputs/` every 100 steps. You can stop it anytime with `Ctrl+C`.*
 
 2.  **Run the Live Demo:**
     ```bash

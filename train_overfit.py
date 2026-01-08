@@ -3,37 +3,36 @@ import torch.nn.functional as F
 import cv2
 import numpy as np
 import os
+import random
 from PIL import Image
 from torchvision import transforms
+from torchvision.transforms import functional as TF
 from model import FlowMatchingNet
 from flow_solver import FlowSolver
 from face_tracker import FaceTracker
 
 # Config
-IMG_SIZE = 128  # Increased from 64 to 128 for better quality
+IMG_SIZE = 512  # HD Resolution for Colab/T4
+BATCH_SIZE = 4  
 
 def create_landmark_mask(image_path, tracker):
     """
     Loads an image, extracts landmarks, and draws them on a black background.
-    This creates the 'Control' signal the model needs.
     """
     img = cv2.imread(image_path)
     img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
     
-    # 1. Get landmarks
     results = tracker.process_frame(img)
-    
-    # 2. Create black canvas
     mask = np.zeros((IMG_SIZE, IMG_SIZE, 3), dtype=np.uint8)
     
-    # 3. Draw landmarks on the black canvas
     if results.multi_face_landmarks:
         tracker.draw_landmarks(mask, results)
     
-    return img, mask
+    # Return as PIL Images for easier torch transforms
+    return Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB)), \
+           Image.fromarray(cv2.cvtColor(mask, cv2.COLOR_BGR2RGB))
 
 def train():
-    # Device selection: Check for CUDA (Nvidia), XPU (Intel), or CPU
     if torch.cuda.is_available():
         device = torch.device("cuda")
     elif hasattr(torch, "xpu") and torch.xpu.is_available():
@@ -41,56 +40,57 @@ def train():
     else:
         device = torch.device("cpu")
         
-    print(f"Using device: {device}")
+    print(f"Using device: {device} | Resolution: {IMG_SIZE}x{IMG_SIZE}")
 
-    # 1. Setup Models
     net = FlowMatchingNet().to(device)
-    solver = FlowSolver()
+    # solver = FlowSolver() # Not needed for training loop anymore
     tracker = FaceTracker()
     optimizer = torch.optim.AdamW(net.parameters(), lr=1e-4)
 
-    # 2. Prepare Data (Overfitting on character1.jpg)
     target_path = "face-avatars/character1.jpg"
     if not os.path.exists(target_path):
         print(f"Error: {target_path} not found.")
         return
 
-    img_np, mask_np = create_landmark_mask(target_path, tracker)
+    # Load Base Data (PIL Images)
+    pil_img, pil_mask = create_landmark_mask(target_path, tracker)
     
-    # Convert to Tensors (Scale to [-1, 1] for better GAN/Diffusion stability)
-    transform = transforms.Compose([
+    # Base Transforms (To Tensor + Normalize)
+    to_tensor = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
-    
-    x1 = transform(img_np).unsqueeze(0).to(device)    # Target Image (t=1)
-    cond = transform(mask_np).unsqueeze(0).to(device) # Landmarks (Condition)
 
-    print(f"Starting 'Overfitting' Training at {IMG_SIZE}x{IMG_SIZE}...")
-    print("The model will learn to generate ONE specific face perfectly.")
+    print("Starting Heavy Duty Training (512x512)...")
+    print("Augmentation Enabled. Saving checkpoints every 500 steps.")
 
-    # Increased steps because 128x128 is harder to learn than 64x64
-    for step in range(1501):
+    # Train for 5000 steps for high resolution convergence
+    for step in range(5001):
         net.train()
         optimizer.zero_grad()
+        
+        # --- Data Augmentation Pipeline ---
+        # 1. Generate Random Parameters
+        angle = random.uniform(-30, 30)      # Rotation
+        scale = random.uniform(0.8, 1.2)     # Zoom
+        translate_x = random.randint(-40, 40) # Shift (Increased for 512px)
+        translate_y = random.randint(-40, 40)
+        
+        # 2. Apply Transform
+        aug_img = TF.affine(pil_img, angle, (translate_x, translate_y), scale, 0)
+        aug_mask = TF.affine(pil_mask, angle, (translate_x, translate_y), scale, 0)
+        
+        # 3. Convert to Tensor
+        x1 = to_tensor(aug_img).unsqueeze(0).to(device)
+        cond = to_tensor(aug_mask).unsqueeze(0).to(device)
 
         # --- Flow Matching Math ---
-        # x_t = (1 - t)*x0 + t*x1 (Straight line path)
-        # We want to predict the velocity: vt = x1 - x0
-        
         t = torch.rand(1, device=device)
-        x0 = torch.randn_like(x1) # Pure noise
-        
-        # Current noisy state at time t
+        x0 = torch.randn_like(x1)
         xt = (1 - t.view(-1, 1, 1, 1)) * x0 + t.view(-1, 1, 1, 1) * x1
-        
-        # Target velocity is simply the straight line: (x1 - x0)
         target_vt = x1 - x0
         
-        # Model predicts velocity
         pred_vt = net(xt, t, cond)
-        
-        # Loss: Mean Squared Error between predicted and true velocity
         loss = F.mse_loss(pred_vt, target_vt)
         
         loss.backward()
@@ -98,27 +98,13 @@ def train():
 
         if step % 100 == 0:
             print(f"Step {step} | Loss: {loss.item():.6f}")
-            
-            # --- Inference / Sampling ---
-            net.eval()
-            with torch.no_grad():
-                # Start with pure noise
-                test_noise = torch.randn_like(x1)
-                
-                # Define our vector field function using the model
-                def model_vt(x, t_val):
-                    return net(x, t_val, cond)
-                
-                # Use our FlowSolver (Euler) to generate the image
-                out = solver.solve_euler(test_noise, model_vt, steps=10)
-                
-                # Denormalize and save
-                out = (out.clamp(-1, 1) + 1) / 2
-                out_np = (out.squeeze().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-                
-                # Save progress
-                if not os.path.exists("results"): os.makedirs("results")
-                cv2.imwrite(f"results/step_{step}.png", cv2.cvtColor(out_np, cv2.COLOR_RGB2BGR))
+
+        # Save Checkpoint every 500 steps
+        if step % 500 == 0:
+            torch.save(net.state_dict(), "model.pth")
+            print(f"Saved model.pth at step {step}")
+
+    print("Training complete! Download 'model.pth' from the file browser.")
 
     print("Training complete! Check the 'results' folder to see the progress.")
     
